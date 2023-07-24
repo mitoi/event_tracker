@@ -1,0 +1,22 @@
+This would be an application used for analyzing and track different events in your application. I would design it to work specifically with sugarcrm.
+It would consists of three parts:
+    - The ingestion service: this will recieve events and store them in a mongo db
+    - The event reader service: which will read data from the db based on a query and return it to the client
+    - The client: which gets all the data and builds meaningful dashboards
+
+The Ingestion service:
+    An api that exposes a post endpoint. This will receive a payload consisting of the event data. 
+    The events table which is stored in mongodb is made out of these columns:
+        - id
+        - emmitter_id (this is the sugarcrm unique_key)
+        - type (view, click, delete, edit, docmerge)
+        - module
+        - record_name
+        - record_id
+        - user_id 
+        - user_name
+        - message
+        - time_spent (specifically for view type action)
+    We have emmitter_id which will answer to the question: who is the client?
+    We have module, record_name, record_id that tells us where in the app is the client spending time and with the help of type we know what is he doing.
+    We have user_id and user_name which tells us who is the current user that uses the app.

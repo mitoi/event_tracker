@@ -1,0 +1,24 @@
+{
+  "name": "ingestion_service",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "npx jasmine"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "body-parser": "^1.20.2",
+    "express": "^4.18.2",
+    "kafkajs": "^2.2.4",
+    "mongodb-memory-server": "^5.1.2",
+    "mongoose": "^7.3.1"
+  },
+  "devDependencies": {
+    "jasmine": "^5.0.2",
+    "sinon": "^15.2.0"
+  }
+}

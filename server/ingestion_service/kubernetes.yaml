@@ -1,0 +1,469 @@
+# DO NOT USE - WORK IN PROGRESS
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sendo
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-reader
+  namespace: sendo
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "watch", "list"]
+
+---
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pod-reader-binding
+  namespace: sendo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pod-reader
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: sendo
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dockerfile-configmap
+  namespace: sendo
+data:
+  Dockerfile: |
+    # Use an official Node.js runtime as the base image
+    FROM node:latest
+    
+    # Set the working directory in the container
+    WORKDIR /app
+    
+    # Copy package.json and package-lock.json to the working directory
+    COPY package*.json ./
+    
+    # Install the dependencies
+    RUN npm install
+    
+    # Copy the entire application to the working directory
+    COPY . .
+    
+    # Expose the port that the Node.js app listens on
+    EXPOSE 3000
+    
+    # Start the Node.js application
+    CMD ["npm", "start"]
+
+---
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: build-pod
+  namespace: sendo
+spec:
+  initContainers:
+    - name: configmap-init
+      image: busybox
+      command: ['sh', '-c', 'echo "$DOCKERFILE" > /app/Dockerfile']
+      volumeMounts:
+        - name: workspace
+          mountPath: /app
+      env:
+        - name: DOCKERFILE
+          valueFrom:
+            configMapKeyRef:
+              name: dockerfile-configmap
+              key: Dockerfile
+  containers:
+    - name: kaniko
+      image: gcr.io/kaniko-project/executor:v1.7.0
+      args:
+        - --dockerfile=/app/Dockerfile
+        - --context=/app
+        - --no-push
+      volumeMounts:
+        - name: workspace
+          mountPath: /app
+  volumes:
+    - name: workspace
+      emptyDir: {}
+
+---
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mongodb-pv
+  namespace: sendo
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual
+  hostPath:
+    path: /data/db
+
+---
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: kafka-pv
+  namespace: sendo
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual
+  hostPath:
+    path: /kafka/data
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongodb-data
+  namespace: sendo
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kafka-data
+  namespace: sendo
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper
+  namespace: sendo
+spec:
+  selector:
+    app: zookeeper
+  ports:
+    - protocol: TCP
+      port: 2181
+      targetPort: 2181
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zookeeper
+  namespace: sendo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zookeeper
+  template:
+    metadata:
+      labels:
+        app: zookeeper
+    spec:
+      containers:
+        - name: zookeeper
+          image: wurstmeister/zookeeper:latest
+          ports:
+            - containerPort: 2181
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-1
+  namespace: sendo
+spec:
+  selector:
+    app: kafka-1
+  ports:
+    - protocol: TCP
+      port: 9092
+      targetPort: 9092
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-1
+  namespace: sendo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-1
+  template:
+    metadata:
+      labels:
+        app: kafka-1
+    spec:
+      containers:
+        - name: kafka-1
+          image: wurstmeister/kafka:latest
+          ports:
+            - containerPort: 9092
+          env:
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: INSIDE://kafka-1:9092,OUTSIDE://localhost:9093
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: INSIDE:PLAINTEXT,OUTSIDE:PLAINTEXT
+            - name: KAFKA_LISTENERS
+              value: INSIDE://0.0.0.0:9092,OUTSIDE://0.0.0.0:9093
+            - name: KAFKA_INTER_BROKER_LISTENER_NAME
+              value: INSIDE
+            - name: KAFKA_ZOOKEEPER_CONNECT
+              value: zookeeper:2181
+            - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+              value: "true"
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /kafka/data
+      volumes:
+        - name: kafka-data
+          persistentVolumeClaim:
+            claimName: kafka-data
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-2
+  namespace: sendo
+spec:
+  selector:
+    app: kafka-2
+  ports:
+    - protocol: TCP
+      port: 9093
+      targetPort: 9093
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-2
+  namespace: sendo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-2
+  template:
+    metadata:
+      labels:
+        app: kafka-2
+    spec:
+      containers:
+        - name: kafka-2
+          image: wurstmeister/kafka:latest
+          ports:
+            - containerPort: 9093
+          env:
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: INSIDE://kafka-2:9093,OUTSIDE://localhost:9094
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: INSIDE:PLAINTEXT,OUTSIDE:PLAINTEXT
+            - name: KAFKA_LISTENERS
+              value: INSIDE://0.0.0.0:9093,OUTSIDE://0.0.0.0:9094
+            - name: KAFKA_INTER_BROKER_LISTENER_NAME
+              value: INSIDE
+            - name: KAFKA_ZOOKEEPER_CONNECT
+              value: zookeeper:2181
+            - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+              value: "true"
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /kafka/data
+      volumes:
+        - name: kafka-data
+          persistentVolumeClaim:
+            claimName: kafka-data
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-manager
+  namespace: sendo
+spec:
+  selector:
+    app: kafka-manager
+  ports:
+    - protocol: TCP
+      port: 9000
+      targetPort: 9000
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-manager
+  namespace: sendo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-manager
+  template:
+    metadata:
+      labels:
+        app: kafka-manager
+    spec:
+      containers:
+        - name: kafka-manager
+          image: hlebalbau/kafka-manager:latest
+          ports:
+            - containerPort: 9000
+          env:
+            - name: ZK_HOSTS
+              value: "zookeeper:2181"
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /kafka/data
+      volumes:
+        - name: kafka-data
+          persistentVolumeClaim:
+            claimName: kafka-data
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  namespace: sendo
+spec:
+  selector:
+    app: mongo
+  ports:
+    - protocol: TCP
+      port: 27017
+      targetPort: 27017
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongo
+  namespace: sendo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongo
+  template:
+    metadata:
+      labels:
+        app: mongo
+    spec:
+      containers:
+        - name: mongo
+          image: mongo:latest
+          ports:
+            - containerPort: 27017
+          volumeMounts:
+            - name: mongodb-data
+              mountPath: /data/db
+      volumes:
+        - name: mongodb-data
+          persistentVolumeClaim:
+            claimName: mongodb-data
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingestion-service
+  namespace: sendo
+spec:
+  selector:
+    app: ingestion-service
+  ports:
+    - protocol: TCP
+      port: 3000
+      targetPort: 3000
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestion-service
+  namespace: sendo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ingestion-service
+  template:
+    metadata:
+      labels:
+        app: ingestion-service
+    spec:
+      initContainers:
+        - name: wait-for-build
+          image: bitnami/kubectl
+          command: ["sh", "-c", "until kubectl get pod build-pod -n sendo -o jsonpath='{.status.phase}' | grep -qE 'Succeeded|Failed'; do sleep 5; done"]
+      containers:
+        - name: ingestion-service
+          image: ingestion-service:latest 
+          ports:
+            - containerPort: 3000
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: kafka-1:9092,kafka-2:9093
+            - name: MONGO_HOST
+              value: mongo:27017
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /kafka/data
+            - name: mongodb-data
+              mountPath: /mongodb/data
+      volumes:
+        - name: kafka-data
+          persistentVolumeClaim:
+            claimName: kafka-data
+        - name: mongodb-data
+          persistentVolumeClaim:
+            claimName: mongodb-data
+        - name: kube-config
+          secret:
+            secretName: kube-config

@@ -1,0 +1,14 @@
+{
+  "name": "populate_db",
+  "version": "1.0.0",
+  "description": "Used only for developemnt purposes.  It also has the purpose of doing load testing on the ingestion service",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.4.0"
+  }
+}
